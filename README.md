@@ -1,5 +1,5 @@
-# DLfmwk_driver
-Code accompanying the paper "A Deep-Learning Framework to Predict the Dynamics of a Human-Driven Vehicle Based on the Road Geometry" by Luca Paparusso, Stefano Melzi, and Francesco Braghin.
+# DriVe-forecast
+Code accompanying the paper "Real-Time Forecasting of Driver-Vehicle Dynamics on 3D Roads: a Deep-Learning Framework Leveraging Bayesian Optimisation" by Luca Paparusso, Stefano Melzi, and Francesco Braghin.
 
 ## Contents
 - functions.py: useful functions called in the main;
@@ -14,7 +14,7 @@ If you used this package in your research, cite it as:
     <code>
 @Misc{,
       author = {L. Paparusso and S. Melzi and F. Braghin},
-      title = {{DLfmwk_driver}},
+      title = {{DriVe-forecast}},
       year = {2021--},
       url = " https://github.com/lpaparusso/DLfmwk_driver"
 }
