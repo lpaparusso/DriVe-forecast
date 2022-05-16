@@ -11,6 +11,7 @@ import pickle
 from keras import backend as K
 from tensorflow.keras.callbacks import ModelCheckpoint
 import json
+from scipy.interpolate import interp1d
 
 # FUNCTIONS DEFINITION
 def load_dataset(dataset_name):
@@ -27,22 +28,22 @@ def load_track(track_name):
 
     """Load the track dataset"""
     
-    mat = scipy.io.loadmat(track_name + "Map/" + track_name + "Data")
+    mat = scipy.io.loadmat("maps/" + track_name + "Map/" + track_name + "Data")
 
     mat.pop('__header__')
     mat.pop('__version__')
     mat.pop('__globals__')
-    mat.pop('leftMarginX')
-    mat.pop('leftMarginY')
-    mat.pop('leftMarginZ')
-    mat.pop('rightMarginX')
-    mat.pop('rightMarginY')
-    mat.pop('rightMarginZ')
-    mat.pop('normalX')
-    mat.pop('normalY')
+#     mat.pop('leftMarginX')
+#     mat.pop('leftMarginY')
+#     mat.pop('leftMarginZ')
+#     mat.pop('rightMarginX')
+#     mat.pop('rightMarginY')
+#     mat.pop('rightMarginZ')
+#     mat.pop('normalX')
+#     mat.pop('normalY')
     mat.pop('normalZ')
-    mat.pop('tangentX')
-    mat.pop('tangentY')
+    # mat.pop('tangentX')
+    # mat.pop('tangentY')
     mat.pop('tangentZ')
     mat.pop('curvature')
 
@@ -59,10 +60,9 @@ def generate_fixed_sets(input_set, train_dev_test_laps):
     """Extract the training, validation and test sets by specifying the number of laps contained in each"""
     
     lap_names = input_set['Session-Lap'].unique()
-    
     random_indices = np.random.permutation(lap_names.shape[0])
     shuffled_names = lap_names[random_indices]
-    
+
     train_names = shuffled_names[:train_dev_test_laps[0]]
     dev_names = shuffled_names[train_dev_test_laps[0]:train_dev_test_laps[0]+train_dev_test_laps[1]] 
     test_names = shuffled_names[train_dev_test_laps[0]+train_dev_test_laps[1]:]
@@ -74,7 +74,7 @@ def generate_fixed_sets(input_set, train_dev_test_laps):
     return (df_train, df_dev, df_test)
 
 
-def insert_future(input_data, trackMap, road_features, dR, pR):
+def insert_future(input_data, trackMap, road_features, dR, pR, extra_variables_names = None):
     
     """Insert the future road geometry information into the dataset"""
         
@@ -92,7 +92,7 @@ def insert_future(input_data, trackMap, road_features, dR, pR):
     track_extended.iloc[-1, :]['curvilinearAb'] = last_value
     
     # Define the interpolation function
-    interp_function = scipy.interpolate.interp1d(track_extended['curvilinearAb'].to_numpy(),track_extended[road_features].to_numpy(), axis=0)
+    interp_function = interp1d(track_extended['curvilinearAb'].to_numpy(),track_extended[road_features].to_numpy(), axis=0)
     
     # Declare useful vectors     
     index_closest=list(range(input_data.shape[0])) #initialise
@@ -127,8 +127,61 @@ def insert_future(input_data, trackMap, road_features, dR, pR):
     new_columns = np.array(new_columns).tolist()
 
     data_extended[new_columns_names] = new_columns
+    extra_variables = None
+    
+    if extra_variables_names is not None:
 
-    return data_extended
+        # Retrieve current vehicle position (move laterally with lateral error from centerline), velocity and global orientation (add relative orientation to road orientation)
+        # Create the names of the new columns of the extended dataset
+        new_columns_names = []
+        for j in extra_variables_names['vehicle'] + extra_variables_names['road']:
+            new_columns_names.append(j) 
+
+        # Extend the track data, including the last point (coinciding with the first point)
+        first_last_distance = np.linalg.norm(trackMap.iloc[-1,:][["centerlineX","centerlineY","centerlineZ"]].values - trackMap.iloc[0,:][["centerlineX","centerlineY","centerlineZ"]].values)
+        track_extended = trackMap.copy()
+        track_extended = track_extended.append(track_extended.iloc[0,:]).reset_index(drop=True)
+        last_value = trackMap.iloc[-1,:]['curvilinearAb'] + first_last_distance
+        track_extended.iloc[-1, :]['curvilinearAb'] = last_value
+
+        # Define the interpolation function
+        interp_function_road = interp1d(track_extended['curvilinearAb'].to_numpy(), track_extended[extra_variables_names['road']].to_numpy(), axis=0)
+
+        # Declare useful vectors     
+        index_closest=list(range(input_data.shape[0])) #initialise
+        value_closest=list(range(input_data.shape[0]))
+
+        value_farthest=list(range(input_data.shape[0]))
+        values_range=list(range(input_data.shape[0]))
+
+        new_columns=list(range(input_data.shape[0]))
+
+        track_ab = trackMap['curvilinearAb'].values
+        data_ab = input_data['curvilinearAb'].values
+
+        for i in range(input_data.shape[0]):
+
+            # Look for the current curvilinear abscissa (index,value), for all the time instants
+            try:
+                values_road = interp_function_road(data_ab[i])
+                values_vehicle = input_data.iloc[i][extra_variables_names['vehicle']].values
+                new_columns[i] = np.concatenate((values_vehicle, values_road), axis=None)
+            except:
+                index_closest[i] = np.argmin(np.absolute(track_ab-data_ab[i]))
+                value_closest[i] = track_ab[index_closest[i]]
+                values_road = interp_function_road(value_closest[i])
+                values_vehicle = input_data.iloc[i][extra_variables_names['vehicle']].values
+
+            # Create interpolated values of the quantities of interest
+            new_columns[i] = np.concatenate((values_vehicle, values_road), axis=None)
+
+        # Generate array and put it into the dataframe
+        extra_variables = input_data[["Session-Lap"]].copy()
+        new_columns = np.array(new_columns).tolist()
+
+        extra_variables[new_columns_names] = new_columns
+    
+    return data_extended, extra_variables
 
 
 def extract_features(input_data, driver_vehicle_road_features):
@@ -163,25 +216,31 @@ def apply_windowing(input_set, stride, dT):
     return windowed_data
 
 
-def data_preparation_routine_fixed(df, trackMap, road_features, dR, pR, driver_vehicle_road_features, stride, dT, train_dev_test_laps):
+def data_preparation_routine_fixed(df, trackMap, road_features, dR, pR, driver_vehicle_road_features, stride, dT, train_dev_test_laps, extra_variables_names=None):
 
     """Routine to prepare data according to the given parameters"""
 
     print('Preparing the dataset...')
     # Separate train, dev and test laps
     df_train, df_dev, df_test = generate_fixed_sets(df, train_dev_test_laps)
+    
+    extra_variables = None
 
     # Insert data of the future
-    df_future = insert_future(df, trackMap, road_features, dR, pR)
-    df_train_future = insert_future(df_train, trackMap, road_features, dR, pR)
-    df_dev_future = insert_future(df_dev, trackMap, road_features, dR, pR)
-    df_test_future = insert_future(df_test, trackMap, road_features, dR, pR)
+    df_future, _ = insert_future(df, trackMap, road_features, dR, pR)
+    df_train_future, _ = insert_future(df_train, trackMap, road_features, dR, pR)
+    df_dev_future, _ = insert_future(df_dev, trackMap, road_features, dR, pR)
+    df_test_future, extra_variables = insert_future(df_test, trackMap, road_features, dR, pR, extra_variables_names=extra_variables_names)
 
     # Extract features of interest
     data_extract = extract_features(df_future,driver_vehicle_road_features)
     data_extract_train = extract_features(df_train_future,driver_vehicle_road_features)
     data_extract_dev = extract_features(df_dev_future,driver_vehicle_road_features)
     data_extract_test = extract_features(df_test_future,driver_vehicle_road_features)
+    
+#     if extra_variables_names is not None:
+#         extra_variables_names.append("Session-Lap")
+#         extra_variables = extract_features(df_test,extra_variables_names)
 
     # Normalise data
     meanv = data_extract.drop(["Session-Lap"],axis=1).mean()
@@ -199,14 +258,17 @@ def data_preparation_routine_fixed(df, trackMap, road_features, dR, pR, driver_v
     x_train = apply_windowing(data_nor_train, stride=stride, dT=dT)
     x_dev = apply_windowing(data_nor_dev, stride=stride, dT=dT)
     x_test = apply_windowing(data_nor_test, stride=stride, dT=dT)
+
+    if extra_variables_names is not None:
+        extra_variables = apply_windowing(extra_variables, stride=stride, dT=dT)
     
     print('Dataset prepared')
     
     # Return the datasets
-    return (x_train, x_dev, x_test, meanv, stdv)
+    return (x_train, x_dev, x_test, meanv, stdv, extra_variables)
 
 
-def build_model(dT, tF, driver_vehicle_indices, road_indices, pR, u_e, r, u_d, prediction_indices, primary_features, w):
+def build_model(dT, tF, driver_vehicle_indices, road_indices, pR, u_e, r, u_d, prediction_indices, primary_features, w, road_on=True):
     
     """Build and compile the Neural Network"""
     
@@ -218,8 +280,9 @@ def build_model(dT, tF, driver_vehicle_indices, road_indices, pR, u_e, r, u_d, p
     
     # Input layer
     inputs = tf.keras.layers.Input(shape=(dT-tF, n_past), name='Input_past')
-    
-    inputs_road = tf.keras.Input(shape=(n_road), name='Input_road')
+
+    if road_on:
+        inputs_road = tf.keras.Input(shape=(n_road), name='Input_road')
     
     # LSTM encoder for the past
     lstm_encoder, forward_h, forward_c, backward_h, backward_c = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(u_e, 
@@ -229,18 +292,23 @@ def build_model(dT, tF, driver_vehicle_indices, road_indices, pR, u_e, r, u_d, p
     state_c = tf.keras.layers.Concatenate()([forward_c, backward_c])
     
     # LSTM encoder for the future road
-    reshape_road = tf.keras.layers.Reshape((pR, -1))(inputs_road)
-    lstm_encoder_2, forward_h_2, forward_c_2, backward_h_2, backward_c_2 = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(u_e, 
+    if road_on:
+        reshape_road = tf.keras.layers.Reshape((pR, -1))(inputs_road)
+        lstm_encoder_2, forward_h_2, forward_c_2, backward_h_2, backward_c_2 = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(u_e,
                                                                                                                               return_state=True, 
                                                                                                                               name='encoder_road'))(reshape_road)
-    state_h_2 = tf.keras.layers.Concatenate()([forward_h_2, backward_h_2])
-    state_c_2 = tf.keras.layers.Concatenate()([forward_c_2, backward_c_2])
+        state_h_2 = tf.keras.layers.Concatenate()([forward_h_2, backward_h_2])
+        state_c_2 = tf.keras.layers.Concatenate()([forward_c_2, backward_c_2])
     
     # Concatenate the two hidden states and use a dense encoding
-    concatenate = tf.keras.layers.Concatenate(axis=-1, name='Concatenate')
-    concatenate_h = tf.keras.layers.Concatenate(axis=-1)([state_h, state_h_2])
-    concatenate_c = tf.keras.layers.Concatenate(axis=-1)([state_c, state_c_2])
-    
+    if road_on:
+        concatenate = tf.keras.layers.Concatenate(axis=-1, name='Concatenate')
+        concatenate_h = tf.keras.layers.Concatenate(axis=-1)([state_h, state_h_2])
+        concatenate_c = tf.keras.layers.Concatenate(axis=-1)([state_c, state_c_2])
+    else:
+        concatenate_h = state_h
+        concatenate_c = state_c
+
     dense_encoding = tf.keras.layers.Dense(u_e*2, name='Dense_encoding')
     dense_encoding2 = tf.keras.layers.Dense(u_e*2, name='Dense_encoding2')
     dense_encoding3 = tf.keras.layers.Dense(u_d, name='Dense_encoding3')
@@ -280,8 +348,12 @@ def build_model(dT, tF, driver_vehicle_indices, road_indices, pR, u_e, r, u_d, p
     def custom_metrics(y_actual, y_pred):
         metrics = tf.keras.backend.mean(tf.keras.backend.abs((y_actual[:,:,:q]-y_pred[:,:,:q])), axis=-1)
         return metrics
-    model = tf.keras.Model(inputs=[inputs, inputs_road], outputs=outputs)
-            
+
+    if road_on:
+        model = tf.keras.Model(inputs=[inputs, inputs_road], outputs=outputs)
+    else:
+        model = tf.keras.Model(inputs=inputs, outputs=outputs)
+
     # Define custom loss and metrics     
     optimizer = tf.keras.optimizers.Adam(learning_rate=0.0001) # the learning rate is dummy, because an adaptive learning rate will be specified later
     model.compile(loss=custom_loss, metrics=[custom_metrics], optimizer = optimizer)
@@ -289,12 +361,12 @@ def build_model(dT, tF, driver_vehicle_indices, road_indices, pR, u_e, r, u_d, p
     return model
 
 
-def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters=''):
+def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters='', fileName = ''):
     
     """Routine to create the dataset, create the Neural Network and save results"""
     
     # Define prefix name of the files
-    fileName = 'Data30red'
+    fileName = fileName
     
     # Get the parameters
     r = r
@@ -318,6 +390,7 @@ def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters=
     prediction_indices = config_parameters['prediction_indices']
     batch_size = config_parameters['batch_size']
     primary_features = config_parameters['primary_features']
+    road_on = config_parameters['road_on']
     
     dT = int(tP+tF)
     
@@ -328,7 +401,7 @@ def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters=
     else:
         np.random.seed(i * 18) # to change training-validation-test split at every iteration (Cross-validation)
         
-    x_train, x_dev, x_test, meanv, stdv = data_preparation_routine_fixed(df,
+    x_train, x_dev, x_test, meanv, stdv, extra_variables = data_preparation_routine_fixed(df,
                                                                          trackMap, 
                                                                          road_features,
                                                                          dR, 
@@ -346,8 +419,10 @@ def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters=
             x_values = i[:-tF, driver_vehicle_indices]
             future_values = i[-tF-1, road_indices]
             y_values = i[-tF:, prediction_indices]
-            yield (x_values, future_values), y_values
-
+            if road_on:
+                yield (x_values, future_values), y_values
+            else:
+                yield x_values, y_values
 
     def _generator_dev():
 
@@ -357,8 +432,10 @@ def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters=
             x_values = i[:-tF, driver_vehicle_indices]
             future_values = i[-tF-1, road_indices]
             y_values = i[-tF:, prediction_indices]
-            yield (x_values, future_values), y_values
-
+            if road_on:
+                yield (x_values, future_values), y_values
+            else:
+                yield x_values, y_values
 
     def _generator_test():
 
@@ -368,16 +445,30 @@ def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters=
             x_values = i[:-tF, driver_vehicle_indices]
             future_values = i[-tF-1, road_indices]
             y_values = i[-tF:, prediction_indices]
-            yield (x_values, future_values), y_values
-            
-    train_dataset = tf.data.Dataset.from_generator(generator=_generator_train, 
-                                                  output_types=((tf.float32, tf.float32), tf.float32))
+            if road_on:
+                yield (x_values, future_values), y_values
+            else:
+                yield x_values, y_values
 
-    dev_dataset = tf.data.Dataset.from_generator(generator=_generator_dev,
-                                                 output_types=((tf.float32, tf.float32), tf.float32))
 
-    test_dataset = tf.data.Dataset.from_generator(generator=_generator_test,
-                                                 output_types=((tf.float32, tf.float32), tf.float32))
+    if road_on:
+        train_dataset = tf.data.Dataset.from_generator(generator=_generator_train,
+                                                      output_types=((tf.float32, tf.float32), tf.float32))
+
+        dev_dataset = tf.data.Dataset.from_generator(generator=_generator_dev,
+                                                     output_types=((tf.float32, tf.float32), tf.float32))
+
+        test_dataset = tf.data.Dataset.from_generator(generator=_generator_test,
+                                                     output_types=((tf.float32, tf.float32), tf.float32))
+    else:
+        train_dataset = tf.data.Dataset.from_generator(generator=_generator_train,
+                                                       output_types=(tf.float32, tf.float32))
+
+        dev_dataset = tf.data.Dataset.from_generator(generator=_generator_dev,
+                                                     output_types=(tf.float32, tf.float32))
+
+        test_dataset = tf.data.Dataset.from_generator(generator=_generator_test,
+                                                      output_types=(tf.float32, tf.float32))
 
 
     train_dataset = train_dataset.shuffle(x_train.shape[0], reshuffle_each_iteration=False).batch(batch_size)
@@ -395,12 +486,13 @@ def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters=
                         u_d,
                         prediction_indices, 
                         primary_features,
-                        w)
+                        w,
+                        road_on=road_on)
     
     # Define the name of the file in which the best Neural Network weights will be saved
     hyperparams_name = '{}_{}.r_{}.w_{}.tP_{}.u_ed_{}.xi_{}'.format(
         fileName , i, round(r,5), round(w,5), tP, round(u_ed,5), round(xi,5))
-    fname_param = os.path.join('results/MODEL', '{}.best.h5'.format(hyperparams_name))
+    fname_param = os.path.join('models/MODEL', '{}.best.h5'.format(hyperparams_name))
 
     # Define early stopping option, model checkpoint and learning rate scheduler
     early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_custom_metrics', mode='min', patience=25)
@@ -451,9 +543,9 @@ def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters=
     
     # Save the weights and history of the model
     model.save_weights(os.path.join(
-        'results/MODEL', '{}.h5'.format(hyperparams_name)), overwrite=True)
+        'models/MODEL', '{}.h5'.format(hyperparams_name)), overwrite=True)
     pickle.dump((history.history), open(os.path.join(
-        'results/MODEL', '{}.history.pkl'.format(hyperparams_name)), 'wb'))
+        'models/MODEL', '{}.history.pkl'.format(hyperparams_name)), 'wb'))
     print("\nelapsed time (training): %.3f seconds\n" % (time.time() - ts))
 
     # Evaluate the metrics on the training and validation sets
@@ -474,10 +566,10 @@ def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters=
         score = score_dev + score_train + score_test
 
         # save to csv
-        csv_name = os.path.join('results/best', '{}_results.csv'.format(fileName))
+        csv_name = os.path.join('models/best', '{}_results.csv'.format(fileName))
         if not os.path.isfile(csv_name):
-            if os.path.isdir('results/best') is False:
-                os.mkdir('results/best')
+            if os.path.isdir('models/best') is False:
+                os.mkdir('models/best')
             with open(csv_name, 'a', encoding="utf-8") as file:
                 file.write('Iteration,'
                            'loss_train,metrics_train,'
@@ -501,13 +593,13 @@ def train_model(r, w, tP, u_ed, xi, save_results=False, i='', config_parameters=
     return bayes_opt_score
 
 
-def best_model(fileName, config_parameters=''):
+def best_model(fileName, config_parameters='', extra_variables_names=None):
     
     """Routine to load the best trained model and a test set"""
     
     # Load file containing the best hyperparameters
     params_fname = '{}_results_best_params.json'.format(fileName)
-    with open('results/best/'+ params_fname, 'r') as f:
+    with open('models/best/'+ params_fname, 'r') as f:
         params = json.load(f)
         
 
@@ -535,12 +627,14 @@ def best_model(fileName, config_parameters=''):
     prediction_indices = config_parameters['prediction_indices']
     batch_size = config_parameters['batch_size']
     primary_features = config_parameters['primary_features']
+    road_on = config_parameters['road_on']
     
     dT = int(tP+tF)    
     
     # Prepare data to be fed to the Neural Network
-    np.random.seed()        
-    x_train, x_dev, x_test, meanv, stdv = data_preparation_routine_fixed(df,
+    np.random.seed(1)  # to use the same training-validation-test split (Bayesian optimisation)
+    tf.random.set_seed(1)
+    x_train, x_dev, x_test, meanv, stdv, extra_variables = data_preparation_routine_fixed(df,
                                                                          trackMap, 
                                                                          road_features,
                                                                          dR, 
@@ -548,19 +642,22 @@ def best_model(fileName, config_parameters=''):
                                                                          driver_vehicle_road_features, 
                                                                          stride, 
                                                                          dT, 
-                                                                         train_dev_test_laps)
+                                                                         train_dev_test_laps,
+                                                                         extra_variables_names = extra_variables_names)
     
     # Create Tensorflow datasets and shuffle them
     def _generator_train():
-    
+
         """Returns the training generator"""
 
         for i in x_train:
             x_values = i[:-tF, driver_vehicle_indices]
-            future_values = i[-tF-1, road_indices]
+            future_values = i[-tF - 1, road_indices]
             y_values = i[-tF:, prediction_indices]
-            yield (x_values, future_values), y_values
-
+            if road_on:
+                yield (x_values, future_values), y_values
+            else:
+                yield x_values, y_values
 
     def _generator_dev():
 
@@ -568,10 +665,12 @@ def best_model(fileName, config_parameters=''):
 
         for i in x_dev:
             x_values = i[:-tF, driver_vehicle_indices]
-            future_values = i[-tF-1, road_indices]
+            future_values = i[-tF - 1, road_indices]
             y_values = i[-tF:, prediction_indices]
-            yield (x_values, future_values), y_values
-
+            if road_on:
+                yield (x_values, future_values), y_values
+            else:
+                yield x_values, y_values
 
     def _generator_test():
 
@@ -579,18 +678,31 @@ def best_model(fileName, config_parameters=''):
 
         for i in x_test:
             x_values = i[:-tF, driver_vehicle_indices]
-            future_values = i[-tF-1, road_indices]
+            future_values = i[-tF - 1, road_indices]
             y_values = i[-tF:, prediction_indices]
-            yield (x_values, future_values), y_values
-            
-    train_dataset = tf.data.Dataset.from_generator(generator=_generator_train, 
-                                                  output_types=((tf.float32, tf.float32), tf.float32))
+            if road_on:
+                yield (x_values, future_values), y_values
+            else:
+                yield x_values, y_values
 
-    dev_dataset = tf.data.Dataset.from_generator(generator=_generator_dev,
-                                                 output_types=((tf.float32, tf.float32), tf.float32))
+    if road_on:
+        train_dataset = tf.data.Dataset.from_generator(generator=_generator_train,
+                                                       output_types=((tf.float32, tf.float32), tf.float32))
 
-    test_dataset = tf.data.Dataset.from_generator(generator=_generator_test,
-                                                 output_types=((tf.float32, tf.float32), tf.float32))
+        dev_dataset = tf.data.Dataset.from_generator(generator=_generator_dev,
+                                                     output_types=((tf.float32, tf.float32), tf.float32))
+
+        test_dataset = tf.data.Dataset.from_generator(generator=_generator_test,
+                                                      output_types=((tf.float32, tf.float32), tf.float32))
+    else:
+        train_dataset = tf.data.Dataset.from_generator(generator=_generator_train,
+                                                       output_types=(tf.float32, tf.float32))
+
+        dev_dataset = tf.data.Dataset.from_generator(generator=_generator_dev,
+                                                     output_types=(tf.float32, tf.float32))
+
+        test_dataset = tf.data.Dataset.from_generator(generator=_generator_test,
+                                                      output_types=(tf.float32, tf.float32))
 
 
     train_dataset = train_dataset.shuffle(x_train.shape[0], reshuffle_each_iteration=False).batch(batch_size)
@@ -610,13 +722,14 @@ def best_model(fileName, config_parameters=''):
                         u_d,
                         prediction_indices, 
                         primary_features,
-                        w)  
+                        w,
+                        road_on=road_on)
 
     # Load the weights of the best model
     hyperparams_name = '{}_{}.r_{}.w_{}.tP_{}.u_ed_{}.xi_{}'.format(
         fileName , '', round(r,5), round(w,5), tP, round(u_ed,5), round(xi,5))
     
-    fname_param = 'results/MODEL/{}.best.h5'.format(hyperparams_name)
+    fname_param = 'models/MODEL/{}.best.h5'.format(hyperparams_name)
     model.load_weights(fname_param)
     
-    return model, test_dataset, x_test, meanv, stdv
+    return model, test_dataset, x_test, meanv, stdv, extra_variables

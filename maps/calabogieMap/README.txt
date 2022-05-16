@@ -1,0 +1,3 @@
+idiada1, idiada2, idiada3 -> low-speed laps in which the driver was asked to stay close to the road margins, to reconstruct the shape of the road.
+buildIdiada -> builds the map of the track using the data idiada1, idiada2, idiada3, producing the output data structure idiadaData.
+idiadaData -> contains the position of the centerline, road width, tangent-normal-binormal vectors, curvilinear abscissa. It is loaded by dataAnalysis to integrate the relative coordinates of the car wrt the road into the data matrix.
