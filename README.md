@@ -1,12 +1,31 @@
 # DriVe-forecast
 Code accompanying the paper "Real-Time Forecasting of Driver-Vehicle Dynamics on 3D Roads: a Deep-Learning Framework Leveraging Bayesian Optimisation" by Luca Paparusso, Stefano Melzi, and Francesco Braghin.
 
-## Contents
-- functions.py: useful functions called in the main;
-- main.ipynb: a Jupyter Notebook containing the main code.
+## Installation
+### Cloning
+Clone the repository and all the submodules, using:
+```
+git clone --recurse-submodules <repository cloning URL>
+```
 
-## Installation and use
-Download or clone this repository. In the repository folder, create a Python3 virtual environment, activate it and install Jupyter Notebook. Launch Jupyter Notebook from the terminal. Open and run the "main.ipynb" notebook.
+### Environment setup
+Create conda environment and install dependencies
+```
+conda create --name DriVe-forecast python=3.6 -y
+source activate DriVe-forecast
+pip install -r requirements.txt
+```
+
+Finally, install the conda environment as a kernel, for usage in IPython notebooks:
+```
+python -m ipykernel install --user --name DriVe-forecast --display-name "Python 3.6 (DriVe-forecast)"
+```
+
+## Contents
+- paper_plots.ipynb: Jupyter notebook replicating the paper plots;
+- plotting_functions.py: plotting utilities called in paper_plots.ipynb;
+- train.py: code for training the framework;
+- functions.py: functions called in train.py.
 
 ## Citation
 If you used this package in your research, cite it as:
