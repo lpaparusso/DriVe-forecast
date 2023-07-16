@@ -17,11 +17,7 @@
     "relativeYaw",
     "chassis_velocities.lateral",
     "chassis_velocities.longitudinal",
-    "chassis_velocities.vertical",
-    "leftMarginX",
-    "leftMarginY",
-    "rightMarginX",
-    "rightMarginY"
+    "chassis_velocities.vertical"
   ],
   "driver_vehicle_features": [
     "chassis_accelerations.longitudinal",
