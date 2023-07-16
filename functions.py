@@ -128,6 +128,16 @@ def insert_future(input_data, trackMap, road_features, dR, pR, extra_variables_n
 
     data_extended[new_columns_names] = new_columns
     extra_variables = None
+
+    # If the road has absolute coordinates, convert them into relative
+    if 'leftMarginX' in road_features:
+        for name in new_columns_names:
+            if 'X' in name:
+               data_extended[name] = data_extended[name] - data_extended['chassis_displacements.longitudinal']
+            elif 'Y' in name:
+               data_extended[name] = data_extended[name] - data_extended['chassis_displacements.lateral']
+            else:
+                raise Exception("Road entries are wrong")
     
     if extra_variables_names is not None:
 

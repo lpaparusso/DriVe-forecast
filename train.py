@@ -39,11 +39,11 @@ import plotting_functions
 # - The number of laps covered by the training, validation and test sets
 
 # Use the notebook to perform also training
-train = False
+train = True
 
 # Name of the config file and model
-configName = "Data30red"
-fileName = "Data30red"
+configName = "Data30red_roadXY"
+fileName = "Data30red_roadXY"
 
 import json
 with open("configs/" + configName + ".json", "r") as read_file:
@@ -218,7 +218,7 @@ extra_variables_names['road'] = ['centerlineX',
 
 
 # ## LOAD BEST MODEL WITH A RANDOM TEST SET AND SAVE THE RESULTS INTO A FILE
-result_file_name = 'saved_example_newdriver'
+result_file_name = 'saved_example_roadXY'
 
 model, test_dataset, x_test, meanv, stdv, extra_variables = functions.best_model(fileName, config_parameters=config_parameters, extra_variables_names=extra_variables_names)
 meanv = meanv.to_numpy()
@@ -237,5 +237,5 @@ else:
 # Save in a pickle file to avoid loading everytime from scratches
 dictionary = {'X_true': X_true, 'Y_true': Y_true, 'Y_pred': Y_pred, 'meanv': meanv, 'stdv': stdv, 'extra_variables': extra_variables}
 
-# with open('pre_computed_tests/' + result_file_name + '.pickle', 'wb') as handle:
-#     pickle.dump(dictionary, handle, protocol=pickle.HIGHEST_PROTOCOL)
+with open('pre_computed_tests/' + result_file_name + '.pickle', 'wb') as handle:
+    pickle.dump(dictionary, handle, protocol=pickle.HIGHEST_PROTOCOL)
