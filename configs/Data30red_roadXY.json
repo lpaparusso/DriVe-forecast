@@ -20,10 +20,8 @@
     "chassis_velocities.vertical",
     "leftMarginX",
     "leftMarginY",
-    "leftMarginZ",
     "rightMarginX",
-    "rightMarginY",
-    "rightMarginZ"
+    "rightMarginY"
   ],
   "driver_vehicle_features": [
     "chassis_accelerations.longitudinal",
